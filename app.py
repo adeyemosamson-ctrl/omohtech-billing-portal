@@ -751,11 +751,23 @@ with tab1:
         st.subheader("3. Document Preview & Actions")
 
         if 'active_pdf' in st.session_state and st.session_state['active_pdf']:
+            st.success(f"✅ **{st.session_state['active_doc_type']} {st.session_state['active_doc_num']}** generated successfully!")
+            
+            base64_pdf = base64.b64encode(st.session_state['active_pdf']).decode('utf-8')
+            
+            st.markdown(f"""
+                <div style="background-color: #1E293B; padding: 18px; border-radius: 10px; margin-bottom: 15px; color: white;">
+                    <p style="margin:0; font-size: 14px; opacity: 0.85;">Client Name: <b>{st.session_state['active_client_name']}</b></p>
+                    <p style="margin:4px 0 0 0; font-size: 14px; opacity: 0.85;">Document Reference: <b>{st.session_state['active_doc_num']}</b></p>
+                    <h2 style="margin:8px 0 0 0; color: #38BDF8;">Total Amount: ₦{st.session_state['active_grand_total']:,.2f}</h2>
+                </div>
+            """, unsafe_allow_html=True)
+
             btn_col1, btn_col2 = st.columns([1, 1])
             
             with btn_col1:
                 st.download_button(
-                    label=f"📥 Save & Download {st.session_state['active_doc_type']} PDF",
+                    label=f"📥 Download {st.session_state['active_doc_type']} PDF",
                     data=st.session_state['active_pdf'],
                     file_name=f"{st.session_state['active_doc_type']}_{st.session_state['active_doc_num']}.pdf",
                     mime="application/pdf",
@@ -776,15 +788,10 @@ with tab1:
                     st.link_button("📲 Share via WhatsApp", wa_url, use_container_width=True)
 
             st.markdown("---")
-            base64_pdf = base64.b64encode(st.session_state['active_pdf']).decode('utf-8')
-            pdf_display = f'''
-                <object data="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="680px">
-                    <embed src="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="680px" />
-                    <p>Your browser does not support embedding PDFs directly. 
-                    Please use the download button above to view the document.</p>
-                </object>
-            '''
-            st.markdown(pdf_display, unsafe_allow_html=True)
+            st.markdown(
+                f'<a href="data:application/pdf;base64,{base64_pdf}" target="_blank" download="{st.session_state["active_doc_type"]}_{st.session_state["active_doc_num"]}.pdf" style="display: block; text-align: center; background-color: #0F172A; color: #38BDF8; padding: 14px; border-radius: 8px; text-decoration: none; font-weight: bold; border: 1px solid #334155;">🔍 Open / Print Full PDF Document</a>',
+                unsafe_allow_html=True
+            )
         else:
             st.info("👈 Fill in details and click **Process & Generate Document** to render preview.")
 

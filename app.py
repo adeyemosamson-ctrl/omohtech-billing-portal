@@ -776,11 +776,16 @@ with tab1:
                     st.link_button("📲 Share via WhatsApp", wa_url, use_container_width=True)
 
             st.markdown("---")
-            base64_pdf = base64.b64encode(st.session_state['active_pdf']).decode('utf-8')
-            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="680" type="application/pdf" style="border: 1px solid #E2E8F0; border-radius: 8px;"></iframe>'
-            st.markdown(pdf_display, unsafe_allow_html=True)
-        else:
-            st.info("Fill in details and click **Process & Generate Document** to render preview.")
+            # NEW UPDATED CODE:
+base64_pdf = base64.b64encode(st.session_state['active_pdf']).decode('utf-8')
+pdf_display = f'''
+    <object data="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="680px">
+        <embed src="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="680px" />
+        <p>Your browser does not support embedding PDFs directly. 
+        Please click the download button above to view the document.</p>
+    </object>
+'''
+st.markdown(pdf_display, unsafe_allow_html=True)
 
 with tab2:
     st.subheader("📈 Financial Overview & Document Log")

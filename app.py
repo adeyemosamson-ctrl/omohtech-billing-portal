@@ -750,7 +750,7 @@ with tab1:
     with col_preview:
         st.subheader("3. Document Preview & Actions")
 
-        if 'active_pdf' in st.session_state:
+        if 'active_pdf' in st.session_state and st.session_state['active_pdf']:
             btn_col1, btn_col2 = st.columns([1, 1])
             
             with btn_col1:
@@ -776,16 +776,17 @@ with tab1:
                     st.link_button("📲 Share via WhatsApp", wa_url, use_container_width=True)
 
             st.markdown("---")
-            # NEW UPDATED CODE:
-base64_pdf = base64.b64encode(st.session_state['active_pdf']).decode('utf-8')
-pdf_display = f'''
-    <object data="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="680px">
-        <embed src="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="680px" />
-        <p>Your browser does not support embedding PDFs directly. 
-        Please click the download button above to view the document.</p>
-    </object>
-'''
-st.markdown(pdf_display, unsafe_allow_html=True)
+            base64_pdf = base64.b64encode(st.session_state['active_pdf']).decode('utf-8')
+            pdf_display = f'''
+                <object data="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="680px">
+                    <embed src="data:application/pdf;base64,{base64_pdf}" type="application/pdf" width="100%" height="680px" />
+                    <p>Your browser does not support embedding PDFs directly. 
+                    Please use the download button above to view the document.</p>
+                </object>
+            '''
+            st.markdown(pdf_display, unsafe_allow_html=True)
+        else:
+            st.info("👈 Fill in details and click **Process & Generate Document** to render preview.")
 
 with tab2:
     st.subheader("📈 Financial Overview & Document Log")

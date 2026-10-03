@@ -10,10 +10,13 @@ import pandas as pd
 import streamlit as st
 
 from num2words import num2words
+from PIL import Image
+import pypdfium2 as pdfium
+
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, HRFlowable
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage, HRFlowable
 )
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
@@ -183,10 +186,16 @@ def update_document_status(doc_num, new_status):
         c.execute("UPDATE document_history SET status = ? WHERE doc_num = ?", (new_status, doc_num))
         conn.commit()
 
+def delete_document_record(doc_id):
+    with sqlite3.connect(DB_FILE) as conn:
+        c = conn.cursor()
+        c.execute("DELETE FROM document_history WHERE id = ?", (doc_id,))
+        conn.commit()
+
 init_db()
 
 # ---------------------------------------------------------
-# 3. HELPER & AI FUNCTIONS
+# 3. HELPER & UTILITY FUNCTIONS
 # ---------------------------------------------------------
 def amount_to_words(amount):
     naira = int(amount)
@@ -225,7 +234,7 @@ def parse_items_with_ai(prompt_text, inventory_dict):
 
     return extracted_items if extracted_items else None
 
-def generate_whatsapp_link(phone_number, doc_type, doc_num, client_name, grand_total, bank_info):
+def generate_whatsapp_link(phone_number, doc_type, doc_num, client_name, grand_total, account_info=None):
     clean_phone = "".join(filter(str.isdigit, str(phone_number)))
     if clean_phone.startswith("0"):
         clean_phone = "234" + clean_phone[1:]
@@ -234,14 +243,17 @@ def generate_whatsapp_link(phone_number, doc_type, doc_num, client_name, grand_t
         f"Hello *{client_name}*,\n\n"
         f"Here is your official *{doc_type}* from *OMOHTECH CONCEPTS SOLUTIONS*.\n\n"
         f"📄 *{doc_type} Reference:* {doc_num}\n"
-        f"💰 *Total Amount:* ₦{grand_total:,.2f}\n\n"
-        f"🏦 *Payment Details:*\n"
-        f"Bank: {bank_info['bank_name']}\n"
-        f"Account Number: {bank_info['acc_num']}\n"
-        f"Account Name: {bank_info['acc_name']}\n\n"
-        f"Thank you for doing business with us!"
+        f"💰 *Total Amount:* ₦{grand_total:,.2f}\n"
     )
-    return f"https://wa.me/{clean_phone}?text={urllib.parse.quote(msg)}"
+    if account_info and isinstance(account_info, dict):
+        msg += (
+            f"\n🏦 *Payment Details:*\n"
+            f"Bank: {account_info.get('bank_name', '')}\n"
+            f"Account Number: {account_info.get('acc_num', '')}\n"
+            f"Account Name: {account_info.get('acc_name', '')}\n"
+        )
+    msg += "\nThank you for doing business with us!"
+    return f"https://api.whatsapp.com/send?phone={clean_phone}&text={urllib.parse.quote(msg)}"
 
 # ---------------------------------------------------------
 # 4. REPORTLAB PDF ENGINE
@@ -323,7 +335,7 @@ def generate_pdf(doc_type, client_info, company_info, items, account_info,
     style_td_r = ParagraphStyle('TDR', fontName='Helvetica', fontSize=8.5, leading=11, textColor=DARK_SLATE, alignment=2)
 
     if logo_path and os.path.exists(logo_path):
-        logo_img = Image(logo_path, width=2.2*inch, height=0.75*inch)
+        logo_img = RLImage(logo_path, width=2.2*inch, height=0.75*inch)
         logo_img.hAlign = 'CENTER'
         story.append(logo_img)
         story.append(Spacer(1, 4))
@@ -455,7 +467,7 @@ def generate_pdf(doc_type, client_info, company_info, items, account_info,
 
         sig_elements = []
         if signature_path and os.path.exists(signature_path):
-            sig_elements.append(Image(signature_path, width=1.4*inch, height=0.4*inch))
+            sig_elements.append(RLImage(signature_path, width=1.4*inch, height=0.4*inch))
         else:
             sig_elements.append(Paragraph("<i>Authorized Signature</i>", ParagraphStyle('SigText', fontName='Helvetica-Oblique', fontSize=8.5, textColor=colors.HexColor("#64748B"), alignment=1)))
 
@@ -504,9 +516,7 @@ st.markdown("""
 
 st.title("💼 Omohtech Concepts Solutions — Billing Portal")
 
-# Load Saved Settings
 app_settings = load_settings()
-
 inventory_dict = get_inventory()
 inventory_list = list(inventory_dict.keys())
 
@@ -565,10 +575,9 @@ with st.sidebar.expander("📦 Inventory & Stock Manager", expanded=False):
             st.success(f"Updated {inv_name} in inventory!")
             st.rerun()
 
-# Business & Company Profile Settings (Persistent)
+# Business Profile Settings
 st.sidebar.markdown("---")
 with st.sidebar.expander("🏢 Company Profile & Contact Settings", expanded=True):
-    st.caption("Update and save your company details permanently")
     company_name = st.text_input("Company Name", value=app_settings.get("company_name", "OMOHTECH CONCEPTS SOLUTIONS"))
     company_addr1 = st.text_input("Address Line 1", value=app_settings.get("company_addr1", "Ikeja, Lagos State"))
     company_addr2 = st.text_input("Address Line 2", value=app_settings.get("company_addr2", "Nigeria"))
@@ -594,11 +603,7 @@ with st.sidebar.expander("🏢 Company Profile & Contact Settings", expanded=Tru
         st.success("Company profile & phone details saved permanently!")
         st.rerun()
 
-# Format Display Phone String
-if phone_secondary.strip():
-    combined_phone = f"{phone_primary.strip()} | {phone_secondary.strip()}"
-else:
-    combined_phone = phone_primary.strip()
+combined_phone = f"{phone_primary.strip()} | {phone_secondary.strip()}" if phone_secondary.strip() else phone_primary.strip()
 
 # Payment Account Details
 st.sidebar.markdown("---")
@@ -747,24 +752,31 @@ with tab1:
 
         st.toast(f"{doc_type} {doc_num} generated & stock updated!")
 
+    # --- VISUAL DOCUMENT PREVIEW PANEL ---
     with col_preview:
-        st.subheader("3. Document Preview & Actions")
+        st.subheader("3. Live Visual Document Preview")
 
         if 'active_pdf' in st.session_state and st.session_state['active_pdf']:
-            st.success(f"✅ **{st.session_state['active_doc_type']} {st.session_state['active_doc_num']}** generated successfully!")
-            
-            base64_pdf = base64.b64encode(st.session_state['active_pdf']).decode('utf-8')
-            
-            st.markdown(f"""
-                <div style="background-color: #1E293B; padding: 18px; border-radius: 10px; margin-bottom: 15px; color: white;">
-                    <p style="margin:0; font-size: 14px; opacity: 0.85;">Client Name: <b>{st.session_state['active_client_name']}</b></p>
-                    <p style="margin:4px 0 0 0; font-size: 14px; opacity: 0.85;">Document Reference: <b>{st.session_state['active_doc_num']}</b></p>
-                    <h2 style="margin:8px 0 0 0; color: #38BDF8;">Total Amount: ₦{st.session_state['active_grand_total']:,.2f}</h2>
-                </div>
-            """, unsafe_allow_html=True)
+            st.success(f"✅ **{st.session_state['active_doc_type']} #{st.session_state['active_doc_num']}** Generated!")
 
-            btn_col1, btn_col2 = st.columns([1, 1])
-            
+            # Render In-App Image Preview via pypdfium2
+            try:
+                pdf_file = pdfium.PdfDocument(st.session_state['active_pdf'])
+                page = pdf_file[0]
+                preview_img = page.render(scale=2).to_pil()
+                st.image(
+                    preview_img,
+                    caption=f"Visual Preview: {st.session_state['active_doc_type']} #{st.session_state['active_doc_num']}",
+                    use_column_width=True
+                )
+            except Exception as e:
+                st.info("Visual preview engine active. Use the download button below to view the PDF.")
+
+            st.markdown("---")
+
+            # Actions & Sharing Buttons
+            btn_col1, btn_col2 = st.columns(2)
+
             with btn_col1:
                 st.download_button(
                     label=f"📥 Download {st.session_state['active_doc_type']} PDF",
@@ -776,35 +788,35 @@ with tab1:
                 )
 
             with btn_col2:
-                if st.session_state.get('active_phone'):
+                phone = st.session_state.get('active_phone', '')
+                if phone:
                     wa_url = generate_whatsapp_link(
-                        st.session_state['active_phone'],
-                        st.session_state['active_doc_type'],
-                        st.session_state['active_doc_num'],
-                        st.session_state['active_client_name'],
-                        st.session_state['active_grand_total'],
-                        st.session_state['active_account_info']
+                        phone_number=phone,
+                        doc_type=st.session_state['active_doc_type'],
+                        doc_num=st.session_state['active_doc_num'],
+                        client_name=st.session_state['active_client_name'],
+                        grand_total=st.session_state['active_grand_total'],
+                        account_info=st.session_state.get('active_account_info')
                     )
                     st.link_button("📲 Share via WhatsApp", wa_url, use_container_width=True)
-
-            st.markdown("---")
-            st.markdown(
-                f'<a href="data:application/pdf;base64,{base64_pdf}" target="_blank" download="{st.session_state["active_doc_type"]}_{st.session_state["active_doc_num"]}.pdf" style="display: block; text-align: center; background-color: #0F172A; color: #38BDF8; padding: 14px; border-radius: 8px; text-decoration: none; font-weight: bold; border: 1px solid #334155;">🔍 Open / Print Full PDF Document</a>',
-                unsafe_allow_html=True
-            )
+                else:
+                    st.info("💡 Add client phone number to enable instant WhatsApp sharing.")
         else:
-            st.info("👈 Fill in details and click **Process & Generate Document** to render preview.")
+            st.info("👈 Fill in details and click **Process & Generate Document** to view preview.")
 
+# ---------------------------------------------------------
+# TAB 2: HISTORY, CONVERSION & RECORD DELETION
+# ---------------------------------------------------------
 with tab2:
     st.subheader("📈 Financial Overview & Document Log")
     
     with sqlite3.connect(DB_FILE) as conn:
         c = conn.cursor()
-        c.execute("SELECT doc_num, doc_type, client_name, total_amount, status, created_at, items_json FROM document_history ORDER BY id DESC")
+        c.execute("SELECT id, doc_num, doc_type, client_name, total_amount, status, created_at, items_json FROM document_history ORDER BY id DESC")
         raw_rows = c.fetchall()
 
     if raw_rows:
-        df = pd.DataFrame(raw_rows, columns=['Doc #', 'Type', 'Client', 'Amount (NGN)', 'Status', 'Date Generated', 'items_json'])
+        df = pd.DataFrame(raw_rows, columns=['id', 'Doc #', 'Type', 'Client', 'Amount (NGN)', 'Status', 'Date Generated', 'items_json'])
 
         f_col1, f_col2 = st.columns([2, 1])
         search_query = f_col1.text_input("🔍 Search Client or Document Ref #")
@@ -826,15 +838,20 @@ with tab2:
         m2.metric("Total Documents Filtered", len(filtered_df))
 
         st.markdown("---")
+        
+        # Saved Client Phone Lookup for WhatsApp Share from History
+        client_phone_map = {name: data["phone"] for name, data in saved_clients.items()}
+
         for idx, row in filtered_df.iterrows():
-            c1, c2, c3, c4, c5 = st.columns([1.5, 1.2, 2.2, 1.5, 1.8])
+            c1, c2, c3, c4, c5, c6 = st.columns([1.2, 1.0, 1.8, 1.2, 1.3, 0.8])
             c1.write(f"**{row['Doc #']}**")
             c2.write(f"`{row['Type']}`")
             c3.write(row['Client'])
             c4.write(f"₦{row['Amount (NGN)']:,.2f}")
             
+            # Action 1: Receipt Conversion / Status Stamp
             if row['Type'] == "Invoice":
-                if c5.button("🔄 Convert to Receipt", key=f"convert_{row['Doc #']}"):
+                if c5.button("🔄 Receipt", key=f"convert_{row['id']}", help="Convert invoice to paid receipt"):
                     try:
                         items_data = json.loads(row['items_json'])
                         st.session_state['line_items'] = pd.DataFrame(items_data)
@@ -842,15 +859,20 @@ with tab2:
                         pass
                     
                     update_document_status(row['Doc #'], "PAID")
-                    
                     st.session_state['set_doc_type'] = "Receipt"
                     st.session_state['set_status'] = "PAID"
                     st.session_state['set_client_name'] = row['Client']
                     
-                    st.success(f"Invoice {row['Doc #']} converted! Ready as Receipt in Generator tab.")
+                    st.success(f"Invoice {row['Doc #']} converted! Switched to Receipt in Generator.")
                     st.rerun()
             else:
                 c5.write(f"✅ {row['Status']}")
+
+            # Action 2: Delete Particular Invoice Record
+            if c6.button("🗑️", key=f"del_{row['id']}", help="Delete this record from history"):
+                delete_document_record(row['id'])
+                st.toast(f"Record {row['Doc #']} deleted!")
+                st.rerun()
 
     else:
         st.info("No documents generated or logged yet.")

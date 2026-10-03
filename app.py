@@ -20,7 +20,35 @@ from reportlab.lib.units import inch
 from reportlab.pdfgen import canvas
 
 # ---------------------------------------------------------
-# 1. DATABASE MANAGEMENT (SQLite)
+# 1. SETTINGS & CONFIGURATION (JSON PERSISTENCE)
+# ---------------------------------------------------------
+SETTINGS_FILE = "settings.json"
+
+def load_settings():
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "company_name": "OMOHTECH CONCEPTS SOLUTIONS",
+        "company_addr1": "Ikeja, Lagos State",
+        "company_addr2": "Nigeria",
+        "phone_primary": "+234 703 435 8624",
+        "phone_secondary": "",
+        "email": "omohtechconceptsoultion@gmail.com",
+        "bank_name": "MONIEPOINT",
+        "acc_num": "5342488434",
+        "acc_name": "OMOHTECH CONCEPTS SOLUTIONS LTD"
+    }
+
+def save_settings(data):
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
+# ---------------------------------------------------------
+# 2. DATABASE MANAGEMENT (SQLite)
 # ---------------------------------------------------------
 DB_FILE = "omohtech_billing.db"
 
@@ -42,7 +70,6 @@ def init_db():
                         stock_qty INTEGER DEFAULT 10
                     )''')
         
-        # Ensure stock_qty column exists if upgrading from previous version
         c.execute("PRAGMA table_info(inventory)")
         columns = [col[1] for col in c.fetchall()]
         if "stock_qty" not in columns:
@@ -87,10 +114,7 @@ def get_next_ref_num(doc_type):
         c = conn.cursor()
         c.execute("SELECT last_seq FROM ref_sequences WHERE doc_type = ?", (doc_type,))
         row = c.fetchone()
-        if row:
-            next_seq = row[0] + 1
-        else:
-            next_seq = 1001
+        next_seq = (row[0] + 1) if row else 1001
     return f"{prefix}-{year}-{next_seq}"
 
 def commit_next_ref_num(doc_type):
@@ -162,7 +186,7 @@ def update_document_status(doc_num, new_status):
 init_db()
 
 # ---------------------------------------------------------
-# 2. HELPER & AI FUNCTIONS
+# 3. HELPER & AI FUNCTIONS
 # ---------------------------------------------------------
 def amount_to_words(amount):
     naira = int(amount)
@@ -220,7 +244,7 @@ def generate_whatsapp_link(phone_number, doc_type, doc_num, client_name, grand_t
     return f"https://wa.me/{clean_phone}?text={urllib.parse.quote(msg)}"
 
 # ---------------------------------------------------------
-# 3. AUTO-FITTING REPORTLAB PDF ENGINE
+# 4. REPORTLAB PDF ENGINE
 # ---------------------------------------------------------
 class NumberedCanvas(canvas.Canvas):
     def __init__(self, *args, **kwargs):
@@ -298,7 +322,6 @@ def generate_pdf(doc_type, client_info, company_info, items, account_info,
     style_td = ParagraphStyle('TD', fontName='Helvetica', fontSize=8.5, leading=11, textColor=DARK_SLATE)
     style_td_r = ParagraphStyle('TDR', fontName='Helvetica', fontSize=8.5, leading=11, textColor=DARK_SLATE, alignment=2)
 
-    # 1. HEADER
     if logo_path and os.path.exists(logo_path):
         logo_img = Image(logo_path, width=2.2*inch, height=0.75*inch)
         logo_img.hAlign = 'CENTER'
@@ -313,12 +336,10 @@ def generate_pdf(doc_type, client_info, company_info, items, account_info,
     
     story.append(HRFlowable(width="100%", thickness=1.5, color=PRIMARY_COLOR, spaceBefore=4, spaceAfter=12))
 
-    # 2. DOCUMENT TITLE & REF
     story.append(Paragraph(doc_type.upper(), style_doc_title))
     story.append(Paragraph(f"Reference No: <b>{company_info['doc_num']}</b>", style_doc_ref))
     story.append(Spacer(1, 12))
 
-    # 3. CLIENT & METADATA CARDS
     client_card = [
         Paragraph("BILLED TO", style_card_head),
         Spacer(1, 3),
@@ -353,7 +374,6 @@ def generate_pdf(doc_type, client_info, company_info, items, account_info,
     story.append(info_card_table)
     story.append(Spacer(1, 12))
 
-    # 4. AUTO-FITTING ITEMS TABLE
     table_data = [[
         Paragraph("Item & Description", style_th),
         Paragraph("Qty", style_th_r),
@@ -402,7 +422,6 @@ def generate_pdf(doc_type, client_info, company_info, items, account_info,
     story.append(items_table)
     story.append(Spacer(1, 10))
 
-    # 5. AMOUNT IN WORDS
     words_text = amount_to_words(grand_total)
     words_para = Paragraph(f"<b>Amount in Words:</b> {words_text}", ParagraphStyle('Words', fontName='Helvetica', fontSize=8.5, textColor=DARK_SLATE))
     words_table = Table([[words_para]], colWidths=[7.4*inch])
@@ -416,7 +435,6 @@ def generate_pdf(doc_type, client_info, company_info, items, account_info,
     story.append(words_table)
     story.append(Spacer(1, 12))
 
-    # 6. PAYMENT INFO & SIGNATURE
     bank_content = [
         Paragraph("PAYMENT INFORMATION", style_card_head),
         Spacer(1, 3),
@@ -472,7 +490,7 @@ def generate_pdf(doc_type, client_info, company_info, items, account_info,
     return buffer.getvalue(), grand_total
 
 # ---------------------------------------------------------
-# 4. STREAMLIT FRONTEND
+# 5. STREAMLIT FRONTEND & SIDEBAR
 # ---------------------------------------------------------
 st.set_page_config(page_title="Omohtech Concepts Solutions - Billing Portal", page_icon="💼", layout="wide")
 
@@ -486,15 +504,17 @@ st.markdown("""
 
 st.title("💼 Omohtech Concepts Solutions — Billing Portal")
 
+# Load Saved Settings
+app_settings = load_settings()
+
 inventory_dict = get_inventory()
 inventory_list = list(inventory_dict.keys())
 
-# Low Stock Warning Banner
 low_stock_items = [name for name, info in inventory_dict.items() if info["stock"] <= 3]
 if low_stock_items:
     st.warning(f"⚠️ **Low Stock Alert:** The following items have 3 or fewer units left: {', '.join(low_stock_items)}")
 
-# Sidebar Configuration
+# --- SIDEBAR CONFIGURATION ---
 st.sidebar.header("⚙ Document Settings")
 doc_type_index = 1 if st.session_state.get('set_doc_type') == "Receipt" else 0
 doc_type = st.sidebar.selectbox("Document Type", ["Invoice", "Receipt"], index=doc_type_index)
@@ -545,20 +565,51 @@ with st.sidebar.expander("📦 Inventory & Stock Manager", expanded=False):
             st.success(f"Updated {inv_name} in inventory!")
             st.rerun()
 
+# Business & Company Profile Settings (Persistent)
 st.sidebar.markdown("---")
-st.sidebar.header("🏢 Company Information")
-company_name = st.sidebar.text_input("Company Name", "OMOHTECH CONCEPTS SOLUTIONS")
-company_addr1 = st.sidebar.text_input("Address Line 1", "No 12, Tech Innovation Hub, Ikeja")
-company_addr2 = st.sidebar.text_input("Address Line 2", "Lagos State, Nigeria")
-company_phone = st.sidebar.text_input("Phone Number", "+234 703 435 8624")
-company_email = st.sidebar.text_input("Email", "omohtechconceptsoultion@gmail.com")
+with st.sidebar.expander("🏢 Company Profile & Contact Settings", expanded=True):
+    st.caption("Update and save your company details permanently")
+    company_name = st.text_input("Company Name", value=app_settings.get("company_name", "OMOHTECH CONCEPTS SOLUTIONS"))
+    company_addr1 = st.text_input("Address Line 1", value=app_settings.get("company_addr1", "Ikeja, Lagos State"))
+    company_addr2 = st.text_input("Address Line 2", value=app_settings.get("company_addr2", "Nigeria"))
+    
+    phone_primary = st.text_input("Primary Phone Line", value=app_settings.get("phone_primary", "+234 703 435 8624"))
+    phone_secondary = st.text_input("Secondary Phone Line (Optional)", value=app_settings.get("phone_secondary", ""))
+    
+    company_email = st.text_input("Email Address", value=app_settings.get("email", "omohtechconceptsoultion@gmail.com"))
 
+    if st.button("💾 Save Profile & Phone Numbers", use_container_width=True):
+        updated_settings = {
+            "company_name": company_name,
+            "company_addr1": company_addr1,
+            "company_addr2": company_addr2,
+            "phone_primary": phone_primary,
+            "phone_secondary": phone_secondary,
+            "email": company_email,
+            "bank_name": app_settings.get("bank_name", "MONIEPOINT"),
+            "acc_num": app_settings.get("acc_num", "5342488434"),
+            "acc_name": app_settings.get("acc_name", "OMOHTECH CONCEPTS SOLUTIONS LTD")
+        }
+        save_settings(updated_settings)
+        st.success("Company profile & phone details saved permanently!")
+        st.rerun()
+
+# Format Display Phone String
+if phone_secondary.strip():
+    combined_phone = f"{phone_primary.strip()} | {phone_secondary.strip()}"
+else:
+    combined_phone = phone_primary.strip()
+
+# Payment Account Details
 st.sidebar.markdown("---")
-st.sidebar.header("🏦 Payment Account Details")
-bank_name = st.sidebar.text_input("Bank Name", "MONIEPOINT")
-acc_num = st.sidebar.text_input("Account Number", "5342488434")
-acc_name = st.sidebar.text_input("Account Name", "OMOHTECH CONCEPTS SOLUTIONS LTD")
+with st.sidebar.expander("🏦 Payment Account Details", expanded=False):
+    bank_name = st.text_input("Bank Name", value=app_settings.get("bank_name", "MONIEPOINT"))
+    acc_num = st.text_input("Account Number", value=app_settings.get("acc_num", "5342488434"))
+    acc_name = st.text_input("Account Name", value=app_settings.get("acc_name", "OMOHTECH CONCEPTS SOLUTIONS LTD"))
 
+# ---------------------------------------------------------
+# 6. TABS & INTERFACE
+# ---------------------------------------------------------
 tab1, tab2 = st.tabs(["📄 Document Generator", "📊 History & Analytics"])
 
 with tab1:
@@ -625,7 +676,6 @@ with tab1:
                 st.session_state['line_items'] = pd.concat([st.session_state['line_items'], new_row], ignore_index=True)
                 st.rerun()
 
-        # Editable Data Table
         edited_df = st.data_editor(
             st.session_state['line_items'],
             num_rows="dynamic",
@@ -649,7 +699,7 @@ with tab1:
     if generate_btn:
         company_info = {
             "name": company_name, "address_line1": company_addr1, "address_line2": company_addr2,
-            "phone": company_phone, "email": company_email,
+            "phone": combined_phone, "email": company_email,
             "doc_num": doc_num, "date": doc_date, "due_date": due_date
         }
         client_info = {
@@ -691,7 +741,6 @@ with tab1:
             save_client(client_name, client_address, client_city, client_country, client_phone)
         log_document(doc_num, doc_type, client_name, grand_total, doc_status, items)
         
-        # Clear pre-filled state flags
         st.session_state.pop('set_doc_type', None)
         st.session_state.pop('set_status', None)
         st.session_state.pop('set_client_name', None)
@@ -763,7 +812,6 @@ with tab2:
         m1.metric("Total Revenue Logged (PAID)", f"₦{paid_sum:,.2f}")
         m2.metric("Total Documents Filtered", len(filtered_df))
 
-        # Render list with 1-Click Convert buttons for Invoices
         st.markdown("---")
         for idx, row in filtered_df.iterrows():
             c1, c2, c3, c4, c5 = st.columns([1.5, 1.2, 2.2, 1.5, 1.8])
